@@ -114,6 +114,9 @@ def run(args, config):
 
         try:
             sync(user, user_id, api_key, config)
+        except Exception as e:
+            logging.warning(f"Something went wrong for user: {user}, skipping")
+            logging.warning(e)
         except:
             logging.warning(f"Something went wrong for user: {user}, skipping")
 
