@@ -18,6 +18,7 @@ from functools import partial
 from itertools import product
 
 from typing import Set
+import hashlib
 
 # Constants
 APPLICATION_NAME = "HRV4Intervals"
@@ -121,7 +122,17 @@ def sync(user, athlete_id, api_key, config):
     download_path = LOCAL_HRV_FILE_PATH_FORMAT.format(user=user)
 
     dbx = get_dropbox_instance(user, config['Dropbox']['app_key'], config['Dropbox']['app_secret'])
+    old_hash = get_md5sum(download_path) if os.path.exists(download_path) else None
+
     result = dbx.files_download_to_file(download_path, REMOTE_HRV_FILE_PATH)
+    new_hash = get_md5sum(download_path)
+
+    if old_hash == new_hash:
+        logging.info(f"HRV4Training CSV did not change for user: {user}, skipping")
+        return
+    else:
+        logging.info(f"Found new data from HRV4Training")
+        logging.debug(f"Old hash: {old_hash}; new hash: {new_hash}")
 
     HRV4Training_data = pd.read_csv(download_path, index_col=False)
 
@@ -264,6 +275,10 @@ def store_tokens(user: str, oauth_result):
                 }
             )
         )
+
+def get_md5sum(filepath):
+    with open(filepath, 'rb') as f:
+        return hashlib.md5(f.read()).hexdigest()
 
 
 # Map functions
