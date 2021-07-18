@@ -134,7 +134,7 @@ def sync(user, athlete_id, api_key, config):
         logging.info(f"HRV4Training CSV did not change for user: {user}, skipping")
         return
     else:
-        logging.info(f"Found new data from HRV4Training")
+        logging.info("Found new data from HRV4Training")
         logging.debug(f"Old hash: {old_hash}; new hash: {new_hash}")
 
     HRV4Training_data = pd.read_csv(download_path, index_col=False)
@@ -155,8 +155,8 @@ def parse_dataframe_HRV_to_intervals(data: pd.DataFrame) -> pd.DataFrame:
         'SDNN': ('hrvSDNN', None),
         'muscle_soreness': ('soreness', map_series),
         'fatigue': ('fatigue', map_series),
-        'Stress': ('stress', map_series),
-        'Mood': ('mood', map_series_reverse),
+        'stress': ('stress', map_series),
+        'mood': ('mood', map_series_reverse),
         'trainingMotivation': ('motivation', map_series_reverse),
         'sleep_quality': ('sleepQuality', map_series_reverse),
     }
@@ -192,7 +192,7 @@ def parse_dataframe_HRV_to_intervals(data: pd.DataFrame) -> pd.DataFrame:
             indices = data[f'custom_tag_{i}_name'] == column
             column_data = column_data.combine_first(data[indices][f'custom_tag_{i}_value'].dropna())
 
-        data[column] = column_data
+        data[column.lower()] = column_data
 
     # Build new dataframe with new column names and after all values are mapped to their new scale
     new_data = pd.DataFrame()
