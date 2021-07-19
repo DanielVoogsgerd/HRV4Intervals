@@ -1,3 +1,4 @@
+#!/usr/bin/env python
 from intervals_api import API
 
 from dropbox import DropboxOAuth2FlowNoRedirect, Dropbox
