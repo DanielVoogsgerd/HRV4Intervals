@@ -3,7 +3,7 @@ from intervals_api import API
 
 from dropbox import DropboxOAuth2FlowNoRedirect, Dropbox
 
-import configparser
+from configparser import ConfigParser
 import argparse
 import logging
 
@@ -20,6 +20,11 @@ from itertools import product
 
 from typing import Set
 import hashlib
+
+import pathlib
+
+from abc import ABC
+from dataclasses import dataclass
 
 # Constants
 APPLICATION_NAME = "HRV4Intervals"
@@ -49,16 +54,16 @@ def main():
     subparsers = parser.add_subparsers(title="Commands")
 
     add_account_command = subparsers.add_parser("add_account")
-    add_account_command.set_defaults(func=add_account)
+    add_account_command.set_defaults(command=AccountCommand)
     add_account_command.add_argument("username")
     add_account_command.add_argument("--intervals-athlete-id")
 
-    run_command = subparsers.add_parser("run")
-    run_command.set_defaults(func=run)
+    sync_command = subparsers.add_parser("sync")
+    sync_command.set_defaults(command=SyncCommand)
 
     args = parser.parse_args()
 
-    if "func" not in args:
+    if "command" not in args:
         parser.print_help()
         sys.exit(1)
 
@@ -69,84 +74,99 @@ def main():
 
     config = parse_config(APP_CONFIG_FILE_PATH)
 
-    args.func(args, config)
+    args.command(args, config).run()
 
 
-def add_account(args, config):
-    user_config = parse_config(USER_CONFIG_FILE_PATH)
+@dataclass
+class Command(ABC):
+    args: argparse.Namespace
+    config: ConfigParser
 
-    if args.username in user_config.sections():
-        print(f"Username {args.username} already exists")
-        sys.exit(1)
-
-    if args.intervals_athlete_id is not None:
-        athlete_id = args.intervals_athlete_id
-    else:
-        athlete_id = input("Enter Intervals Athlete ID: ")
-
-    api_key = input("Enter intervals API key: ")
-
-    assert API.validate_athlete_id(athlete_id)
-    assert API.validate_api_key(api_key)
-
-    user_config.add_section(args.username)
-    user_config.set(args.username, USER_CONFIG_ATHLETE_ID_FIELD, athlete_id)
-    user_config.set(args.username, USER_CONFIG_API_KEY_FIELD, api_key)
-
-    with open(USER_CONFIG_FILE_PATH, "w") as user_config_file:
-        user_config.write(user_config_file)
+    def run(self):
+        pass
 
 
-def run(args, config):
-    ensure_directory(CONFIG_DIR)
-    ensure_directory(STORAGE_DIR)
+class AccountCommand(Command):
+    def run(self):
+        """Add account to configuration."""
+        args = self.args
+        config = self.config
 
-    user_config = parse_config(USER_CONFIG_FILE_PATH)
+        user_config = parse_config(USER_CONFIG_FILE_PATH)
 
-    users = user_config.sections()
+        if args.username in user_config.sections():
+            print(f"Username {args.username} already exists")
+            sys.exit(1)
 
-    if len(users) == 0:
-        print("No users found. Check --help how to add an account.")
+        if args.intervals_athlete_id is not None:
+            athlete_id = args.intervals_athlete_id
+        else:
+            athlete_id = input("Enter Intervals Athlete ID: ")
 
-    for user in users:
-        user_info = user_config[user]
-        user_id = user_info[USER_CONFIG_ATHLETE_ID_FIELD]
-        api_key = user_info[USER_CONFIG_API_KEY_FIELD]
+        api_key = input("Enter intervals API key: ")
 
-        try:
-            sync(user, user_id, api_key, config)
-        except Exception as e:
-            logging.warning(f"Something went wrong for user: {user}, skipping")
-            logging.warning(e)
-        except:
-            logging.warning(f"Something went wrong for user: {user}, skipping")
+        assert API.validate_athlete_id(athlete_id)
+        assert API.validate_api_key(api_key)
 
+        user_config.add_section(args.username)
+        user_config.set(args.username, USER_CONFIG_ATHLETE_ID_FIELD, athlete_id)
+        user_config.set(args.username, USER_CONFIG_API_KEY_FIELD, api_key)
 
-def sync(user, athlete_id, api_key, config):
-    download_path = LOCAL_HRV_FILE_PATH_FORMAT.format(user=user)
+        with open(USER_CONFIG_FILE_PATH, "w") as user_config_file:
+            user_config.write(user_config_file)
 
-    dbx = get_dropbox_instance(user, config['Dropbox']['app_key'], config['Dropbox']['app_secret'])
-    old_hash = get_md5sum(download_path) if os.path.exists(download_path) else None
+class SyncCommand(Command):
+    def run(self):
+        """Sync HRV4Training data to Intervals.icu."""
+        args = self.args
+        config = self.config
 
-    result = dbx.files_download_to_file(download_path, REMOTE_HRV_FILE_PATH)
-    new_hash = get_md5sum(download_path)
+        ensure_directory(CONFIG_DIR)
+        ensure_directory(STORAGE_DIR)
 
-    if old_hash == new_hash:
-        logging.info(f"HRV4Training CSV did not change for user: {user}, skipping")
-        return
-    else:
-        logging.info("Found new data from HRV4Training")
-        logging.debug(f"Old hash: {old_hash}; new hash: {new_hash}")
+        user_config = parse_config(USER_CONFIG_FILE_PATH)
 
-    HRV4Training_data = pd.read_csv(download_path, index_col=False)
+        users = user_config.sections()
 
-    intervals_data = parse_dataframe_HRV_to_intervals(HRV4Training_data)
+        if len(users) == 0:
+            print("No users found. Check --help how to add an account.")
+            sys.exit(1)
 
-    logging.info(f"Uploading {len(intervals_data)} entries to Intervals.icu for user: {user}")
+        for user in users:
+            user_info = user_config[user]
+            athlete_id = user_info[USER_CONFIG_ATHLETE_ID_FIELD]
+            api_key = user_info[USER_CONFIG_API_KEY_FIELD]
 
-    result = API(athlete_id, api_key).wellness_csv.update(intervals_data, index_label="date")
+            try:
+                download_path = LOCAL_HRV_FILE_PATH_FORMAT.format(user=user)
 
-    assert 'status' not in result or result['status'] == 200
+                dbx = get_dropbox_instance(user, config['Dropbox']['app_key'], config['Dropbox']['app_secret'])
+                old_hash = get_md5sum(download_path) if os.path.exists(download_path) else None
+
+                result = dbx.files_download_to_file(download_path, REMOTE_HRV_FILE_PATH)
+                new_hash = get_md5sum(download_path)
+
+                if old_hash == new_hash:
+                    logging.info(f"HRV4Training CSV did not change for user: {user}, skipping")
+                    return
+                else:
+                    logging.info("Found new data from HRV4Training")
+                    logging.debug(f"Old hash: {old_hash}; new hash: {new_hash}")
+
+                HRV4Training_data = pd.read_csv(download_path, index_col=False)
+
+                intervals_data = parse_dataframe_HRV_to_intervals(HRV4Training_data)
+
+                logging.info(f"Uploading {len(intervals_data)} entries to Intervals.icu for user: {user}")
+
+                result = API(athlete_id, api_key).wellness_csv.update(intervals_data, index_label="date")
+
+                assert 'status' not in result or result['status'] == 200
+            except Exception as e:
+                logging.warning(f"Something went wrong for user: {user}, skipping")
+                logging.warning(e)
+            except:
+                logging.warning(f"Something went wrong for user: {user}, skipping")
 
 
 def parse_dataframe_HRV_to_intervals(data: pd.DataFrame) -> pd.DataFrame:
@@ -208,7 +228,7 @@ def parse_dataframe_HRV_to_intervals(data: pd.DataFrame) -> pd.DataFrame:
 
 
 def parse_config(config_location: str):
-    config = configparser.ConfigParser()
+    config = ConfigParser()
     config.read(config_location)
     return config
 
@@ -280,13 +300,14 @@ def store_tokens(user: str, oauth_result):
             )
         )
 
-def get_md5sum(filepath):
+
+def get_md5sum(filepath: pathlib.Path):
     with open(filepath, 'rb') as f:
         return hashlib.md5(f.read()).hexdigest()
 
 
 # Map functions
-def map_series(series):
+def map_series(series: pd.Series):
     return pd.cut(
         series,
         np.linspace(0, 10, 5),
@@ -296,7 +317,7 @@ def map_series(series):
     )
 
 
-def map_series_reverse(series):
+def map_series_reverse(series: pd.Series):
     return pd.cut(
         series,
         np.linspace(0, 10, 5),
