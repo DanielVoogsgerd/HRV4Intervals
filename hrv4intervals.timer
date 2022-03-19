@@ -1,0 +1,10 @@
+[Unit]
+Description=Sync Google Fit data to intervals every hour
+
+[Timer]
+OnBootSec=15min
+OnUnitActiveSec=1h
+
+[Install]
+WantedBy=timers.target
+

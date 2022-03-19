@@ -1,0 +1,10 @@
+[Unit]
+Description=Sync between HRV4Training and Intervals.icu
+After=network.target
+
+[Service]
+Type=oneshot
+ExecStart=venv_run HRV4Intervals /opt/daniel/HRV4Intervals/sync.py run
+
+[Install]
+WantedBy=multi-user.target
